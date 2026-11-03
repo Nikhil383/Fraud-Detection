@@ -1,7 +1,8 @@
-"""Chronological data splitting module to prevent temporal leakage."""
+"""Chronological data splitting module to prevent temporal leakage, supporting Polars and Pandas."""
 
-from typing import Tuple
+from typing import Tuple, Union
 import pandas as pd
+import polars as pl
 
 from fraud_capstone.config import (
     SPLIT_TEST_RATIO,
@@ -11,11 +12,11 @@ from fraud_capstone.config import (
 
 
 def chronological_split(
-    df: pd.DataFrame,
+    df: Union[pd.DataFrame, pl.DataFrame],
     train_ratio: float = SPLIT_TRAIN_RATIO,
     val_ratio: float = SPLIT_VAL_RATIO,
     test_ratio: float = SPLIT_TEST_RATIO,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> Union[Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame], Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]]:
     """Split dataframe chronologically by step.
 
     Ties are preserved in their stable order.
@@ -27,9 +28,19 @@ def chronological_split(
     if not abs((train_ratio + val_ratio + test_ratio) - 1.0) < 1e-5:
         raise ValueError("Ratios for train, val, and test must sum to 1.0.")
 
-    # Sort strictly chronologically by step, stable sort for ties
-    sorted_df = df.sort_values(by="step", kind="mergesort").reset_index(drop=True)
+    if isinstance(df, pl.DataFrame):
+        sorted_df = df.sort("step", maintain_order=True)
+        n = sorted_df.height
+        train_end = int(n * train_ratio)
+        val_end = int(n * (train_ratio + val_ratio))
+        return (
+            sorted_df.slice(0, train_end),
+            sorted_df.slice(train_end, val_end - train_end),
+            sorted_df.slice(val_end, n - val_end),
+        )
 
+    # Pandas split
+    sorted_df = df.sort_values(by="step", kind="mergesort").reset_index(drop=True)
     n = len(sorted_df)
     train_end = int(n * train_ratio)
     val_end = int(n * (train_ratio + val_ratio))

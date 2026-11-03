@@ -5,6 +5,7 @@ import {
   Activity, 
   Zap, 
   RefreshCw, 
+  RotateCcw,
   ArrowRightLeft, 
   Wallet, 
   TrendingUp, 
@@ -12,6 +13,18 @@ import {
 } from 'lucide-react'
 
 const TRANSACTION_TYPES = ['TRANSFER', 'CASH_OUT', 'PAYMENT', 'CASH_IN', 'DEBIT']
+
+const DEFAULT_FORM_DATA = {
+  step: 1,
+  type: 'TRANSFER',
+  amount: 0.0,
+  nameOrig: '',
+  oldbalanceOrg: 0.0,
+  newbalanceOrig: 0.0,
+  nameDest: '',
+  oldbalanceDest: 0.0,
+  newbalanceDest: 0.0,
+}
 
 const PRESETS = [
   {
@@ -128,6 +141,13 @@ export default function App() {
     setError(null)
   }
 
+  const handleReset = () => {
+    setFormData(DEFAULT_FORM_DATA)
+    setResult(null)
+    setError(null)
+    checkHealth()
+  }
+
   const isFraud = result?.is_fraud_prediction === 1
   const probPercent = result ? (result.fraud_probability * 100).toFixed(1) : 0
 
@@ -155,8 +175,8 @@ export default function App() {
                 API: {backendHealth.status.toUpperCase()}
               </span>
             </div>
-            <button className="btn-secondary" onClick={checkHealth} title="Refresh connection">
-              <RefreshCw size={14} /> Refresh
+            <button className="btn-secondary" onClick={handleReset} title="Reset all input values and results">
+              <RotateCcw size={14} /> Refresh / Reset
             </button>
           </div>
         </div>
@@ -317,17 +337,29 @@ export default function App() {
               </div>
             </div>
 
-            <button type="submit" className="btn-primary" disabled={loading} style={{ marginTop: '0.5rem' }}>
-              {loading ? (
-                <>
-                  <RefreshCw className="spin" size={18} /> Analyzing Transaction...
-                </>
-              ) : (
-                <>
-                  <Activity size={18} /> Run ML Fraud Assessment
-                </>
-              )}
-            </button>
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+              <button type="submit" className="btn-primary" disabled={loading} style={{ flex: 1 }}>
+                {loading ? (
+                  <>
+                    <RefreshCw className="spin" size={18} /> Analyzing Transaction...
+                  </>
+                ) : (
+                  <>
+                    <Activity size={18} /> Run ML Fraud Assessment
+                  </>
+                )}
+              </button>
+              <button 
+                type="button" 
+                className="btn-secondary" 
+                onClick={handleReset} 
+                disabled={loading}
+                title="Reset form values and verdict"
+                style={{ padding: '0 1.25rem' }}
+              >
+                <RotateCcw size={16} /> Reset
+              </button>
+            </div>
           </form>
         </section>
 

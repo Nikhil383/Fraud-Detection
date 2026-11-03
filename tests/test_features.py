@@ -1,7 +1,8 @@
-"""Tests for feature engineering and leakage prevention."""
+"""Tests for feature engineering and leakage prevention with both Pandas and Polars."""
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 from fraud_capstone.config import PROHIBITED_FEATURE_COLUMNS, TARGET_COLUMN
@@ -60,18 +61,43 @@ def test_engineered_features_derived_properly(sample_raw_df):
 
     assert "hour_of_day" in features_df.columns
     assert "day_of_week" in features_df.columns
-    assert "orig_discrepancy" in features_df.columns
-    assert "dest_discrepancy" in features_df.columns
+    assert "errorBalanceOrig" in features_df.columns
+    assert "errorBalanceDest" in features_df.columns
     assert "type_TRANSFER" in features_df.columns
     assert "type_PAYMENT" in features_df.columns
+    assert "origEmptied" in features_df.columns
+    assert "destZeroBefore" in features_df.columns
 
     # Check payment 1 values
     row0 = features_df.iloc[0]
     assert row0["hour_of_day"] == 1
     assert row0["type_PAYMENT"] == 1
     assert row0["type_TRANSFER"] == 0
-    # discrepancy: (500 - 100) - 400 == 0
-    assert row0["orig_discrepancy"] == 0.0
+    # errorBalanceOrig: (400 + 100) - 500 == 0
+    assert row0["errorBalanceOrig"] == 0.0
+
+
+def test_polars_feature_engineering():
+    """Verify Polars feature engineering produces identical values."""
+    pl_df = pl.DataFrame({
+        "step": [1, 2],
+        "type": ["PAYMENT", "TRANSFER"],
+        "amount": [100.0, 200.0],
+        "nameOrig": ["C12345", "C11111"],
+        "oldbalanceOrg": [500.0, 200.0],
+        "newbalanceOrig": [400.0, 0.0],
+        "nameDest": ["M54321", "C22222"],
+        "oldbalanceDest": [0.0, 10.0],
+        "newbalanceDest": [0.0, 210.0],
+        "isFraud": [0, 1],
+        "isFlaggedFraud": [0, 0],
+    })
+    pl_features = engineer_features(pl_df)
+    assert "hour" in pl_features.columns
+    assert "type_TRANSFER" in pl_features.columns
+    assert "errorBalanceOrig" in pl_features.columns
+    assert "origEmptied" in pl_features.columns
+    assert pl_features["origEmptied"].to_list() == [0, 1]
 
 
 def test_feature_alignment():

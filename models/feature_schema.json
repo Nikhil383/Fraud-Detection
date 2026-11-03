@@ -1,28 +1,19 @@
 {
   "features": [
     "step",
-    "hour_of_day",
-    "day_of_week",
+    "hour",
+    "type_TRANSFER",
     "amount",
-    "log_amount",
     "oldbalanceOrg",
     "newbalanceOrig",
     "oldbalanceDest",
     "newbalanceDest",
-    "orig_balance_change",
-    "dest_balance_change",
-    "orig_discrepancy",
-    "dest_discrepancy",
-    "amount_to_orig_ratio",
-    "amount_to_dest_ratio",
-    "is_zero_orig_balance",
-    "is_zero_dest_balance",
-    "is_orig_dest_same",
-    "type_CASH_IN",
-    "type_CASH_OUT",
-    "type_DEBIT",
-    "type_PAYMENT",
-    "type_TRANSFER"
+    "errorBalanceOrig",
+    "errorBalanceDest",
+    "origEmptied",
+    "destZeroBefore",
+    "isMerchantDest",
+    "amount_to_balance"
   ],
-  "count": 23
+  "count": 14
 }

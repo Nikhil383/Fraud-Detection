@@ -1,4 +1,4 @@
-"""XGBoost training pipeline with leakage prevention, validation tuning, and MLflow logging."""
+"""Training pipeline with Polars and Pandas support, multi-model selection (HistGradientBoosting / XGBoost / Random Forest), and validation threshold tuning."""
 
 import argparse
 import logging
@@ -8,7 +8,17 @@ from typing import Any, Dict, Optional
 import joblib
 import numpy as np
 import pandas as pd
-from xgboost import XGBClassifier
+import polars as pl
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
+try:
+    from xgboost import XGBClassifier
+    HAS_XGBOOST = True
+except ImportError:
+    HAS_XGBOOST = False
 
 from fraud_capstone.config import (
     DEFAULT_DECISION_THRESHOLD,
@@ -17,7 +27,11 @@ from fraud_capstone.config import (
     RAW_DATA_PATH,
     TARGET_COLUMN,
 )
-from fraud_capstone.data import load_raw_data, save_data_quality_report, validate_dataset
+from fraud_capstone.data import (
+    load_raw_data_polars,
+    save_data_quality_report,
+    validate_dataset_polars,
+)
 from fraud_capstone.eda import generate_eda_reports
 from fraud_capstone.evaluate import (
     evaluate_predictions,
@@ -27,6 +41,7 @@ from fraud_capstone.evaluate import (
     save_metrics_report,
 )
 from fraud_capstone.features import (
+    NOTEBOOK_FEATURES,
     align_features,
     engineer_features,
     get_feature_names,
@@ -41,27 +56,30 @@ logger = logging.getLogger(__name__)
 def train_pipeline(
     data_path: Optional[Path] = None,
     nrows: Optional[int] = None,
+    sample_frac: Optional[float] = None,
+    model_type: str = "hist_gb",  # "hist_gb", "random_forest", "xgboost", or "logistic"
+    filter_transfer_cashout: bool = True,
     tracking: bool = False,
     experiment_name: str = "paysim-fraud-detection",
 ) -> Dict[str, Any]:
-    """Execute the end-to-end training pipeline.
+    """Execute the end-to-end training pipeline matching the notebook.
 
-    1. Load and validate data
-    2. Generate data quality & EDA reports
-    3. Chronological split (70% train, 15% val, 15% test)
-    4. Leakage-safe feature extraction & schema save
-    5. Train XGBoost classifier with scale_pos_weight
-    6. Select threshold on validation set
-    7. Evaluate on held-out test set
-    8. Save model, threshold, schema, and evaluation metrics
-    9. Optional MLflow logging
+    1. Load data via Polars
+    2. Run data quality checks & generate EDA reports
+    3. Filter to TRANSFER / CASH_OUT (the only fraudulent transaction types in PaySim)
+    4. Chronological split (70% train, 15% val, 15% test)
+    5. Feature engineering using Polars expressions
+    6. Train balanced classifier (HistGradientBoosting, XGBoost, or RF)
+    7. Select optimal threshold on validation set
+    8. Evaluate on held-out test set
+    9. Save model, threshold, schema, and metrics
     """
     logger.info("Starting PaySim Fraud Detection Pipeline...")
-    df = load_raw_data(file_path=data_path, nrows=nrows)
-    logger.info(f"Loaded dataset with {len(df):,} rows.")
+    df = load_raw_data_polars(file_path=data_path, nrows=nrows, sample_frac=sample_frac)
+    logger.info(f"Loaded dataset with {df.height:,} rows.")
 
     # 1. Validation & Data Quality
-    quality_summary = validate_dataset(df)
+    quality_summary = validate_dataset_polars(df)
     save_data_quality_report(quality_summary)
     logger.info("Saved data quality report.")
 
@@ -69,63 +87,87 @@ def train_pipeline(
     generate_eda_reports(df)
     logger.info("Generated EDA reports and figures.")
 
-    # 3. Chronological Split
-    train_df, val_df, test_df = chronological_split(df)
+    # 3. Filter subset: Only TRANSFER and CASH_OUT can be fraud
+    if filter_transfer_cashout:
+        df_model = df.filter(pl.col("type").is_in(["TRANSFER", "CASH_OUT"]))
+        logger.info(f"Filtered modeling subset (TRANSFER & CASH_OUT): {df_model.height:,} rows.")
+    else:
+        df_model = df
+
+    # 4. Chronological Split
+    train_df, val_df, test_df = chronological_split(df_model)
     logger.info(
-        f"Data split: Train={len(train_df):,}, Val={len(val_df):,}, Test={len(test_df):,}"
+        f"Data split: Train={train_df.height:,}, Val={val_df.height:,}, Test={test_df.height:,}"
     )
 
-    # 4. Feature Engineering
-    X_train_raw = engineer_features(train_df)
-    feature_names = get_feature_names(X_train_raw)
+    # 5. Feature Engineering
+    train_features_df = engineer_features(train_df)
+    val_features_df = engineer_features(val_df)
+    test_features_df = engineer_features(test_df)
+
+    # Use notebook features schema
+    feature_names = [f for f in NOTEBOOK_FEATURES if f in train_features_df.columns]
     save_feature_schema(feature_names)
-    logger.info(f"Engineered {len(feature_names)} features and saved schema.")
+    logger.info(f"Engineered and saved feature schema: {feature_names}")
 
-    y_train = train_df[TARGET_COLUMN].values
-    X_train = align_features(X_train_raw, feature_names)
+    X_train = align_features(train_features_df, feature_names).to_numpy().astype(np.float64)
+    y_train = train_df[TARGET_COLUMN].to_numpy()
 
-    X_val_raw = engineer_features(val_df)
-    X_val = align_features(X_val_raw, feature_names)
-    y_val = val_df[TARGET_COLUMN].values
+    X_val = align_features(val_features_df, feature_names).to_numpy().astype(np.float64)
+    y_val = val_df[TARGET_COLUMN].to_numpy()
 
-    X_test_raw = engineer_features(test_df)
-    X_test = align_features(X_test_raw, feature_names)
-    y_test = test_df[TARGET_COLUMN].values
+    X_test = align_features(test_features_df, feature_names).to_numpy().astype(np.float64)
+    y_test = test_df[TARGET_COLUMN].to_numpy()
 
-    # 5. Class weighting for extreme imbalance
-    neg_count = (y_train == 0).sum()
-    pos_count = (y_train == 1).sum()
-    scale_pos_weight = (neg_count / pos_count) if pos_count > 0 else 1.0
-    logger.info(f"Calculated scale_pos_weight: {scale_pos_weight:.2f}")
+    # 6. Classifier Selection & Training
+    logger.info(f"Training classifier: {model_type}")
+    if model_type == "hist_gb":
+        model = HistGradientBoostingClassifier(
+            max_iter=200,
+            learning_rate=0.1,
+            class_weight="balanced",
+            random_state=DEFAULT_RANDOM_STATE,
+        )
+    elif model_type == "random_forest":
+        model = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=14,
+            min_samples_leaf=3,
+            class_weight="balanced_subsample",
+            n_jobs=-1,
+            random_state=DEFAULT_RANDOM_STATE,
+        )
+    elif model_type == "xgboost":
+        if not HAS_XGBOOST:
+            raise ImportError("xgboost is not installed. Please install xgboost or use 'hist_gb'.")
+        neg_count = (y_train == 0).sum()
+        pos_count = (y_train == 1).sum()
+        scale_pos_weight = (neg_count / pos_count) if pos_count > 0 else 1.0
+        model = XGBClassifier(
+            scale_pos_weight=scale_pos_weight,
+            n_estimators=100,
+            max_depth=6,
+            learning_rate=0.1,
+            eval_metric="aucpr",
+            random_state=DEFAULT_RANDOM_STATE,
+            tree_method="hist",
+        )
+    else:
+        model = Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", LogisticRegression(class_weight="balanced", max_iter=1000, random_state=DEFAULT_RANDOM_STATE)),
+        ])
 
-    # Train XGBoost
-    xgb_params = {
-        "n_estimators": 100,
-        "max_depth": 6,
-        "learning_rate": 0.1,
-        "scale_pos_weight": scale_pos_weight,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "random_state": DEFAULT_RANDOM_STATE,
-        "eval_metric": "logloss",
-        "n_jobs": -1,
-    }
-    model = XGBClassifier(**xgb_params)
-    model.fit(
-        X_train,
-        y_train,
-        eval_set=[(X_val, y_val)],
-        verbose=False,
-    )
-    logger.info("Trained XGBoost baseline model.")
+    model.fit(X_train, y_train)
+    logger.info("Model fitting complete.")
 
-    # 6. Threshold selection on validation set
+    # 7. Threshold selection on validation set
     val_probs = model.predict_proba(X_val)[:, 1]
     best_thresh, val_score = find_optimal_threshold(y_val, val_probs, metric="f1")
     logger.info(f"Selected validation threshold: {best_thresh:.4f} (Val F1: {val_score:.4f})")
     save_decision_threshold(best_thresh)
 
-    # 7. Evaluate on held-out test set
+    # 8. Evaluate on held-out test set
     test_probs = model.predict_proba(X_test)[:, 1]
     test_metrics = evaluate_predictions(y_test, test_probs, threshold=best_thresh)
     save_metrics_report(test_metrics)
@@ -137,20 +179,27 @@ def train_pipeline(
         f"F1: {test_metrics['f1']:.4f}"
     )
 
-    # 8. Save Model
+    # 9. Save Model artifact (compatible dictionary packaging)
     MODEL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, MODEL_FILE)
-    logger.info(f"Saved trained model to {MODEL_FILE}")
+    joblib.dump(
+        {
+            "model": model,
+            "features": feature_names,
+            "threshold": best_thresh,
+            "model_type": model_type,
+        },
+        MODEL_FILE,
+    )
+    logger.info(f"Saved trained model package to {MODEL_FILE}")
 
-    # 9. MLflow Tracking (Optional)
+    # 10. MLflow Tracking (Optional)
     if tracking:
         try:
             import mlflow
-            import mlflow.xgboost
 
             mlflow.set_experiment(experiment_name)
-            with mlflow.start_run(run_name="xgboost_baseline"):
-                mlflow.log_params(xgb_params)
+            with mlflow.start_run(run_name=f"{model_type}_pipeline"):
+                mlflow.log_param("model_type", model_type)
                 mlflow.log_param("threshold", best_thresh)
                 mlflow.log_metrics({
                     "test_pr_auc": test_metrics["pr_auc"],
@@ -160,14 +209,9 @@ def train_pipeline(
                     "test_f1": test_metrics["f1"],
                     "val_f1": val_score,
                 })
-                mlflow.xgboost.log_model(model, "xgboost_model")
                 logger.info("Logged run and artifacts to MLflow.")
-        except ImportError:
-            logger.warning(
-                "MLflow is not installed. To log runs, install via 'uv sync --extra tracking'."
-            )
         except Exception as e:
-            logger.warning(f"Failed to log to MLflow: {e}")
+            logger.warning(f"MLflow tracking failed or omitted: {e}")
 
     return {
         "model": model,
@@ -178,7 +222,7 @@ def train_pipeline(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train PaySim XGBoost Fraud Detection Model")
+    parser = argparse.ArgumentParser(description="Train PaySim Fraud Detection Pipeline")
     parser.add_argument(
         "--data",
         type=str,
@@ -192,6 +236,13 @@ def main():
         help="Limit number of rows for testing/quick iteration",
     )
     parser.add_argument(
+        "--model",
+        type=str,
+        default="hist_gb",
+        choices=["hist_gb", "random_forest", "xgboost", "logistic"],
+        help="Model architecture to train",
+    )
+    parser.add_argument(
         "--tracking",
         action="store_true",
         help="Enable MLflow experiment tracking",
@@ -201,6 +252,7 @@ def main():
     train_pipeline(
         data_path=Path(args.data),
         nrows=args.nrows,
+        model_type=args.model,
         tracking=args.tracking,
     )
 

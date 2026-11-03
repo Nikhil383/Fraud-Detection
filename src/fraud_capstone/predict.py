@@ -1,4 +1,4 @@
-"""Inference and scoring module for PaySim fraud detection."""
+"""Inference and scoring module for PaySim fraud detection supporting Polars, Pandas, and dicts."""
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 import joblib
 import numpy as np
 import pandas as pd
+import polars as pl
 
 from fraud_capstone.config import (
     FEATURE_SCHEMA_FILE,
@@ -50,16 +51,51 @@ class FraudPredictor:
                 f"Feature schema not found at '{self.schema_path}'."
             )
 
-        self.model = joblib.load(self.model_path)
-        self.feature_schema = load_feature_schema(self.schema_path)
-        self.threshold = load_decision_threshold(self.threshold_path)
+        loaded = joblib.load(self.model_path)
+        # Support dict format saved by notebook or standalone estimator
+        if isinstance(loaded, dict) and "model" in loaded:
+            self.model = loaded["model"]
+            if "features" in loaded:
+                self.feature_schema = loaded["features"]
+            if "threshold" in loaded:
+                self.threshold = float(loaded["threshold"])
+        else:
+            self.model = loaded
 
-    def predict_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Score a batch dataframe of raw transactions."""
-        X_eng = engineer_features(df)
-        X_aligned = align_features(X_eng, self.feature_schema)
-        probabilities = self.model.predict_proba(X_aligned)[:, 1]
+        if not self.feature_schema and self.schema_path.exists():
+            self.feature_schema = load_feature_schema(self.schema_path)
+        if self.threshold_path.exists():
+            self.threshold = load_decision_threshold(self.threshold_path)
+
+    def predict_dataframe(self, df: Union[pd.DataFrame, pl.DataFrame]) -> Union[pd.DataFrame, pl.DataFrame]:
+        """Score a batch dataframe of raw transactions (Polars or Pandas)."""
+        is_polars = isinstance(df, pl.DataFrame)
+        df_pd = df.to_pandas() if is_polars else df
+
+        # In PaySim, only TRANSFER and CASH_OUT can be fraudulent
+        mask = df_pd["type"].isin(["TRANSFER", "CASH_OUT"]).values
+        probabilities = np.zeros(len(df_pd), dtype=float)
+
+        if mask.any():
+            sub_df = df_pd[mask]
+            X_eng = engineer_features(sub_df)
+            X_aligned = align_features(X_eng, self.feature_schema)
+            if isinstance(X_aligned, pl.DataFrame):
+                X_matrix = X_aligned.to_numpy().astype(np.float64)
+            else:
+                X_matrix = X_aligned.values.astype(np.float64)
+            probabilities[mask] = self.model.predict_proba(X_matrix)[:, 1]
+
         predictions = (probabilities >= self.threshold).astype(int)
+
+        if is_polars:
+            return (
+                df.with_columns(
+                    pl.Series("fraud_probability", probabilities),
+                    pl.Series("is_fraud_prediction", predictions),
+                    pl.lit(self.threshold).alias("decision_threshold"),
+                )
+            )
 
         results = df.copy()
         results["fraud_probability"] = probabilities
