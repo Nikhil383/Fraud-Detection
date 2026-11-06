@@ -71,6 +71,8 @@ const PRESETS = [
   }
 ]
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+
 export default function App() {
   const [formData, setFormData] = useState(PRESETS[0].data)
   const [loading, setLoading] = useState(false)
@@ -81,7 +83,7 @@ export default function App() {
   // Check backend health
   const checkHealth = async () => {
     try {
-      const res = await fetch('http://127.0.0.1:8000/health')
+      const res = await fetch(`${API_BASE_URL}/health`)
       if (res.ok) {
         const data = await res.json()
         setBackendHealth(data)
@@ -115,7 +117,7 @@ export default function App() {
     setError(null)
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/score', {
+      const response = await fetch(`${API_BASE_URL}/score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
