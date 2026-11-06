@@ -11,12 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv package manager
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
-# Copy project definition and source
-COPY pyproject.toml .
-RUN uv pip install --system -e .
-
+# Copy project definition and files
+COPY pyproject.toml README.md ./
 COPY src/ src/
 COPY models/ models/
+
+# Install the application and its dependencies
+RUN uv pip install --system -e .
 
 EXPOSE 8000
 
