@@ -83,6 +83,15 @@ def get_predictor() -> FraudPredictor:
     return _predictor
 
 
+@app.get("/")
+def root():
+    return {
+        "message": "PaySim Fraud Detection API is running",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
 @app.get("/health", status_code=status.HTTP_200_OK)
 def health():
     """Health check endpoint checking service and artifact availability."""
