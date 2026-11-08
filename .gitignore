@@ -28,7 +28,8 @@ data/raw/*
 !data/raw/.gitkeep
 dataset/*
 !dataset/.gitkeep
-models/*.joblib
+# models/*.joblib (uncommented to include the trained model in git for deployment)
+!models/xgboost_fraud.joblib
 mlruns/
 .mlflow/
 *.db
