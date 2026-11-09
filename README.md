@@ -4,7 +4,7 @@ An end-to-end, production-grade fraud detection platform built on the PaySim syn
 
 ---
 
-## 🌐 Live Deployments
+## Live Deployments
 
 | Component | Platform | Status | URL / Link |
 | :--- | :--- | :--- | :--- |
@@ -13,12 +13,10 @@ An end-to-end, production-grade fraud detection platform built on the PaySim syn
 | **Interactive API Docs** | Swagger UI | Active | [Interactive Swagger Docs (`/docs`)](https://paysim-fraud-detection-w1lm.onrender.com/docs) |
 | **Service Health Check** | FastAPI | Active | [Health Probe (`/health`)](https://paysim-fraud-detection-w1lm.onrender.com/health) |
 
-> [!NOTE]
-> The backend runs on Render's free tier, which sleeps after 15 minutes of inactivity. If the service is idle, the first request will take ~45–50 seconds to complete its cold-start spin-up.
 
 ---
 
-## 📊 Benchmark Model Performance
+## Benchmark Model Performance
 
 Trained chronologically on PaySim transactions (70% train / 15% validation / 15% test) with validation-tuned optimal decision cutoffs:
 
