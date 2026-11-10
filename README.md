@@ -1,4 +1,4 @@
-# PaySim Fraud Detection Capstone System
+# Fraud Detection Capstone System
 
 An end-to-end, production-grade fraud detection platform built on the PaySim synthetic mobile-money transaction dataset (6.36M transactions). The project features leakage-safe feature engineering, chronological validation, tuned XGBoost classification, MLflow tracking, an interactive React dashboard on Vercel, containerized FastAPI inference on Render, Evidently AI drift monitoring, Apache Kafka streaming, and PyTorch Geometric GraphSAGE.
 
@@ -201,6 +201,7 @@ Open `http://localhost:3000` (or `http://localhost:5173`) in your browser to acc
 
 ---
 
+
 ## 4. Advanced Extensions
 
 ### Evidently Drift Monitoring
@@ -259,6 +260,17 @@ kubectl apply -f k8s-deployment.yaml
 
 4. **Graph Structures Complement Tabular Classifiers:**
    - Fraud syndicates frequently hop across synthetic accounts (mule networks). Temporal bipartite graphs (Origin $\rightarrow$ Destination) modeled with GraphSAGE capture structural network anomalies that isolated tabular transaction rows alone cannot detect.
+
+---
+
+## 6. Demo
+
+---
+<img width="1911" height="940" alt="image" src="https://github.com/user-attachments/assets/24321102-3bd4-4b5a-ad56-e6377dc56325" />
+
+<img width="1909" height="927" alt="image" src="https://github.com/user-attachments/assets/2bdfcfcf-b280-4959-b5b4-c703e4e41bd2" />
+
+
 
 ---
 
